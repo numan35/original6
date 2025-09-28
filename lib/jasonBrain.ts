@@ -80,7 +80,7 @@ async function maybeGetDeviceLocation() {
     try {
       const arr = await (Location as any).reverseGeocodeAsync?.({ latitude: lat, longitude: lng });
       const place = Array.isArray(arr) ? arr[0] : null;
-      city_from_device = place?.city || place?.subregion || place?.region || place?.name || undefined;
+      city_from_device = place?.district || place?.city || place?.subregion || place?.name || undefined;
     } catch {}
 
     return {
@@ -92,6 +92,7 @@ async function maybeGetDeviceLocation() {
   } catch {
     return null;
   }
+}
 }
 
 export async function callJasonBrain(
@@ -150,5 +151,3 @@ export async function callJasonBrain(
 }
 
 export default callJasonBrain;
-
-export {};
