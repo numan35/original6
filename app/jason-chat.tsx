@@ -1,107 +1,98 @@
-// lib/jasonBrain.ts — adds optional device location slots before calling Jason Brain
-import Constants from "expo-constants";
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, ScrollView, ActivityIndicator } from 'react-native';
+import { callJasonBrain } from '@/lib/jasonBrain';
+import { assertConfig } from '@/lib/configGuard';
 
-type ChatMessage = { role: "user" | "assistant" | "system" | "tool"; content: string; name?: string };
-export type JasonResponse = {
-  ok: boolean;
-  build?: string;
-  requestId?: string;
-  message?: { role: string; content?: string; annotations?: any[] } | null;
-  messagesDelta?: any[];
-  annotations?: any[];
-  slots?: Record<string, any>;
-  next_action?: string | null;
-  toolRequests?: any[];
-  error?: string;
-};
+export default function JasonChat() {
+  assertConfig();
+  
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<Array<{role: string, content: string}>>([]);
+  const [loading, setLoading] = useState(false);
 
-type CallOpts = { requestId?: string; dryRun?: boolean };
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return;
+    
+    const userMessage = { role: 'user', content: input };
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
+    setInput('');
+    setLoading(true);
 
-async function maybeGetDeviceLocation() {
-  // Try dynamic import so projects without expo-location still build
-  try {
-    // @ts-ignore
-    const Location = await import("expo-location");
-    // Ask permission politely; if denied, skip
-    const perm = await (Location as any).requestForegroundPermissionsAsync?.();
-    if (!perm || perm.status !== "granted") return null;
-
-    const pos = await (Location as any).getCurrentPositionAsync?.({ accuracy: (Location as any).Accuracy?.Balanced });
-    if (!pos?.coords) return null;
-    const lat = pos.coords.latitude;
-    const lng = pos.coords.longitude;
-
-    let city_from_device: string | undefined = undefined;
     try {
-      const arr = await (Location as any).reverseGeocodeAsync?.({ latitude: lat, longitude: lng });
-      const place = Array.isArray(arr) ? arr[0] : null;
-      city_from_device = place?.city || place?.region || place?.name || undefined;
-    } catch {}
-
-    return {
-      lat: String(lat),
-      lng: String(lng),
-      city_from_device,
-      location_accuracy: pos.coords.accuracy ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-export async function callJasonBrain(
-  messages: ChatMessage[],
-  slots: Record<string, any> = {},
-  opts: CallOpts = {}
-): Promise<JasonResponse> {
-  const extra: any = (Constants as any).expoConfig?.extra ?? {};
-  const FUNCTIONS_BASE: string = extra.supabaseFunctionsBase || extra.functionsBase || "https://lkoogdveljyxwweranaf.functions.supabase.co";
-  const ANON: string = extra.supabaseAnonKey || extra.supabaseAnon || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxrb29nZHZlbGp5eHd3ZXJhbmFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY5NjQ1MDEsImV4cCI6MjA3MjU0MDUwMX0.gER6-spRheuIzCe_ET-ntaklbRQHkmGb75I3UJkFYKs";
-
-  // Only attempt device location if caller hasn't provided lat/lng already
-  let mergedSlots: Record<string, any> = { ...(slots || {}) };
-  if (mergedSlots.lat == null || mergedSlots.lng == null) {
-    const loc = await maybeGetDeviceLocation();
-    if (loc) {
-      // don't overwrite explicit caller-provided values
-      if (mergedSlots.lat == null) mergedSlots.lat = loc.lat;
-      if (mergedSlots.lng == null) mergedSlots.lng = loc.lng;
-      if (mergedSlots.city_from_device == null && loc.city_from_device) mergedSlots.city_from_device = loc.city_from_device;
-      if (mergedSlots.location_accuracy == null && loc.location_accuracy != null) mergedSlots.location_accuracy = loc.location_accuracy;
+      const response = await callJasonBrain([userMessage]);
+      if (response.ok && response.message) {
+        setMessages(prev => [...prev, {
+          role: response.message!.role,
+          content: response.message!.content || 'No response content'
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `Error: ${response.error || 'Unknown error'}`
+        }]);
+      }
+    } catch (error: any) {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `Error: ${error.message || 'Failed to send message'}`
+      }]);
+    } finally {
+      setLoading(false);
     }
-  }
-
-  const body = { messages, slots: mergedSlots, requestId: opts.requestId };
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "authorization": `Bearer ${ANON}`,
-    "apikey": ANON,
   };
-  if (opts.dryRun) headers["x-dry-run"] = "1";
 
-  let res: Response;
-  try {
-    res = await fetch(`${FUNCTIONS_BASE}/jason-brain`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-  } catch (e: any) {
-    return { ok: false, error: `Network error calling jason-brain: ${String(e?.message ?? e)}` };
-  }
+  return (
+    <View style={{ flex: 1, padding: 16 }}>
+      <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 16 }}>
+        Jason Chat
+      </Text>
+      
+      <ScrollView style={{ flex: 1, marginBottom: 16 }}>
+        {messages.map((message, index) => (
+          <View key={index} style={{ 
+            marginBottom: 12, 
+            padding: 12, 
+            backgroundColor: message.role === 'user' ? '#e3f2fd' : '#f5f5f5',
+            borderRadius: 8 
+          }}>
+            <Text style={{ fontWeight: '600', marginBottom: 4 }}>
+              {message.role === 'user' ? 'You' : 'Jason'}
+            </Text>
+            <Text>{message.content}</Text>
+          </View>
+        ))}
+        {loading && (
+          <View style={{ padding: 12 }}>
+            <ActivityIndicator />
+            <Text style={{ textAlign: 'center', marginTop: 8 }}>
+              Jason is thinking...
+            </Text>
+          </View>
+        )}
+      </ScrollView>
 
-  const text = await res.text();
-  let json: JasonResponse;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return { ok: false, error: `Bad JSON from jason-brain (${res.status})` };
-  }
-
-  if (json?.message && !json.message.annotations && json.annotations) {
-    json.message.annotations = json.annotations;
-  }
-  return json;
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <TextInput
+          style={{ 
+            flex: 1, 
+            borderWidth: 1, 
+            borderColor: '#ccc', 
+            padding: 12, 
+            borderRadius: 8 
+          }}
+          value={input}
+          onChangeText={setInput}
+          placeholder="Type your message..."
+          multiline
+          onSubmitEditing={sendMessage}
+        />
+        <Button 
+          title={loading ? "..." : "Send"} 
+          onPress={sendMessage}
+          disabled={loading || !input.trim()}
+        />
+      </View>
+    </View>
+  );
 }
-
-export default callJasonBrain;
