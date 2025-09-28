@@ -92,7 +92,6 @@ async function maybeGetDeviceLocation() {
   } catch {
     return null;
   }
-}
 
 export async function callJasonBrain(
   messages: ChatMessage[],
