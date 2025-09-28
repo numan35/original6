@@ -10,23 +10,29 @@ export default function CallDetails() {
   const [call, setCall] = useState<CallRow | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchCall = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase.from('calls').select('*').eq('id', id).single();
-      if (error) throw error;
-      setCall(data as CallRow);
-    } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to load call');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let isMounted = true;
+
+    const fetchCall = async () => {
+      try {
+        if (isMounted) setLoading(true);
+        const { data, error } = await supabase.from('calls').select('*').eq('id', id).single();
+        if (error) throw error;
+        if (isMounted) setCall(data as CallRow);
+      } catch (e: any) {
+        if (isMounted) Alert.alert('Error', e.message ?? 'Failed to load call');
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
     fetchCall();
     const t = setInterval(fetchCall, 3000);
-    return () => clearInterval(t);
+    
+    return () => {
+      isMounted = false;
+      clearInterval(t);
+    };
   }, [id]);
 
   if (loading) return <ActivityIndicator style={{ marginTop: 20 }} />;
