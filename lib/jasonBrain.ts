@@ -18,15 +18,60 @@ export type JasonResponse = {
 type CallOpts = { requestId?: string; dryRun?: boolean };
 
 async function maybeGetDeviceLocation() {
-  // Try dynamic import so projects without expo-location still build
   try {
+    // Dynamic import to avoid hard dependency during web/server builds
     // @ts-ignore
     const Location = await import("expo-location");
-    // Ask permission politely; if denied, skip
+    // @ts-ignore
+    const RN = await import("react-native");
+    const Platform = (RN as any).Platform;
+
     const perm = await (Location as any).requestForegroundPermissionsAsync?.();
     if (!perm || perm.status !== "granted") return null;
 
-    const pos = await (Location as any).getCurrentPositionAsync?.({ accuracy: (Location as any).Accuracy?.Balanced });
+    // Start with the freshest single reading at the highest accuracy allowed.
+    let pos = await (Location as any).getCurrentPositionAsync?.({
+      accuracy: (Location as any).Accuracy?.Highest ?? (Location as any).Accuracy?.High,
+      maximumAge: 5000,
+      mayShowUserSettingsDialog: true,
+      timeout: 12000,
+    });
+
+    // On mobile, quickly watch for up to ~4s and keep the best (lowest accuracy value in meters).
+    // This dramatically reduces "off by many miles" when the first fix is coarse (e.g., cell/Wi‑Fi).
+    try {
+      if (Platform?.OS === "ios" || Platform?.OS === "android") {
+        const start = Date.now();
+        let best = pos;
+        let bestAcc = best?.coords?.accuracy ?? Number.POSITIVE_INFINITY;
+
+        const sub = await (Location as any).watchPositionAsync?.(
+          {
+            accuracy: (Location as any).Accuracy?.Highest ?? (Location as any).Accuracy?.High,
+            timeInterval: 1000,
+            distanceInterval: 0,
+            mayShowUserSettingsDialog: true,
+          },
+          (p: any) => {
+            const a = p?.coords?.accuracy ?? Number.POSITIVE_INFINITY;
+            if (a < bestAcc) {
+              best = p;
+              bestAcc = a;
+            }
+          }
+        );
+
+        // Wait up to 4 seconds for a better fix
+        while (Date.now() - start < 4000) {
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        await sub?.remove?.();
+        if (best && (bestAcc < (pos?.coords?.accuracy ?? Number.POSITIVE_INFINITY))) {
+          pos = best;
+        }
+      }
+    } catch {}
+
     if (!pos?.coords) return null;
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
@@ -35,7 +80,7 @@ async function maybeGetDeviceLocation() {
     try {
       const arr = await (Location as any).reverseGeocodeAsync?.({ latitude: lat, longitude: lng });
       const place = Array.isArray(arr) ? arr[0] : null;
-      city_from_device = place?.city || place?.region || place?.name || undefined;
+      city_from_device = place?.city || place?.subregion || place?.region || place?.name || undefined;
     } catch {}
 
     return {
@@ -47,6 +92,7 @@ async function maybeGetDeviceLocation() {
   } catch {
     return null;
   }
+}
 }
 
 export async function callJasonBrain(
